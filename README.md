@@ -217,6 +217,31 @@ This project is built off of [electron-vite](https://github.com/alex8088/electro
 - `pnpm run lint:fix` - Lint the project and fix linting errors
 - `pnpm run i18next` - Generate i18n files
 
+### Fork macOS media-session build
+
+This fork carries a macOS Media Session patch so Bluetooth play/pause/next/previous controls route to Feishin, including MPV/local playback.
+
+For local testing:
+
+```bash
+./scripts/test-macos-media-session.sh
+```
+
+For a local installable macOS app without requiring Xcode `actool`:
+
+```bash
+pnpm run build
+pnpm exec electron-builder --mac --dir --config electron-builder.local-mac.yml
+osascript -e 'quit app "Feishin"' || true
+rm -rf /Applications/Feishin.app
+cp -R dist/mac-arm64/Feishin.app /Applications/Feishin.app
+xattr -dr com.apple.quarantine /Applications/Feishin.app
+```
+
+Then launch Feishin from `/Applications`, enable both `Media Session` and `Global media hotkeys` under Settings > Hotkeys, restart Feishin, and allow Feishin in macOS System Settings > Privacy & Security > Accessibility if prompted.
+
+For future downloadable fork builds, push this branch and run the manual GitHub Action named `Fork Sync and Release macOS`. It merges `jeffvli/feishin:main` into the current branch, builds arm64 and x64 macOS app zips with `electron-builder.local-mac.yml`, and attaches them to the configured GitHub Release tag.
+
 ## Translation
 
 This project uses [Weblate](https://hosted.weblate.org/projects/feishin/) for translations. If you would like to contribute, please visit the link and submit a translation.
