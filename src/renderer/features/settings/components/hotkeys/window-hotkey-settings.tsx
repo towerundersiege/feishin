@@ -11,6 +11,7 @@ import { useHotkeySettings, usePlaybackSettings, useSettingsStoreActions } from 
 import { Switch } from '/@/shared/components/switch/switch';
 
 const localSettings = isElectron() ? window.api.localSettings : null;
+const isMacOS = isElectron() ? window.api.utils.isMacOS() : false;
 
 export const WindowHotkeySettings = memo(() => {
     const { t } = useTranslation();
@@ -40,7 +41,7 @@ export const WindowHotkeySettings = memo(() => {
 
                         // Restart is required if media session was previously enabled
                         // Though the global hotkey should override the media session, it's better to restart to be safe
-                        if (e.currentTarget.checked && mediaSession) {
+                        if (e.currentTarget.checked && mediaSession && !isMacOS) {
                             localSettings!.set('mediaSession', false);
                             setSettings({
                                 playback: {

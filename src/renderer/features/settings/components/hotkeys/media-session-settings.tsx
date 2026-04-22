@@ -9,20 +9,20 @@ import {
 import { openRestartRequiredToast } from '/@/renderer/features/settings/restart-toast';
 import { usePlaybackSettings, useSettingsStoreActions } from '/@/renderer/store/settings.store';
 import { Switch } from '/@/shared/components/switch/switch';
-import { PlayerType } from '/@/shared/types/types';
 
 const isLinux = isElectron() ? window.api.utils.isLinux() : false;
+const isMacOS = isElectron() ? window.api.utils.isMacOS() : false;
 const isDesktop = isElectron();
 const localSettings = isElectron() ? window.api.localSettings : null;
 
 export const MediaSessionSettings = memo(() => {
     const { t } = useTranslation();
-    const { mediaSession, type: playbackType } = usePlaybackSettings();
+    const { mediaSession } = usePlaybackSettings();
     const { setSettings } = useSettingsStoreActions();
 
     function handleMediaSessionChange(e: boolean) {
-        // If media session is enabled, disable global media hotkeys
-        if (e) {
+        // On macOS, keep global handlers as a fallback for Bluetooth AVRCP controls.
+        if (e && !isMacOS) {
             localSettings!.set('global_media_hotkeys', false);
             setSettings({
                 hotkeys: {
@@ -48,7 +48,7 @@ export const MediaSessionSettings = memo(() => {
                 <Switch
                     aria-label="Toggle media Session"
                     checked={mediaSession}
-                    disabled={isLinux || !isDesktop || playbackType !== PlayerType.WEB}
+                    disabled={isLinux || !isDesktop}
                     onChange={(e) => handleMediaSessionChange(e.currentTarget.checked)}
                 />
             ),

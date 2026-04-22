@@ -11,23 +11,45 @@ import {
 } from '/@/renderer/features/radio/hooks/use-radio-player';
 import {
     subscribeCurrentTrack,
+    subscribePlayerProgress,
     subscribePlayerStatus,
     usePlaybackSettings,
     usePlayerStore,
-    useSettingsStore,
     useSkipButtons,
     useTimestampStoreBase,
 } from '/@/renderer/store';
 import { LibraryItem, QueueSong } from '/@/shared/types/domain-types';
-import { PlayerStatus, PlayerType } from '/@/shared/types/types';
+import { PlayerStatus } from '/@/shared/types/types';
 
-const mediaSession = navigator.mediaSession;
+const mediaSession = 'mediaSession' in navigator ? navigator.mediaSession : undefined;
+
+function clearMediaSessionHandlers() {
+    if (!mediaSession) {
+        return;
+    }
+
+    mediaSession.setActionHandler('nexttrack', null);
+    mediaSession.setActionHandler('pause', null);
+    mediaSession.setActionHandler('play', null);
+    mediaSession.setActionHandler('previoustrack', null);
+    mediaSession.setActionHandler('seekto', null);
+    mediaSession.setActionHandler('stop', null);
+    mediaSession.setActionHandler('seekbackward', null);
+    mediaSession.setActionHandler('seekforward', null);
+}
+
+function getDurationSeconds(song: QueueSong | undefined) {
+    if (!song?.duration) {
+        return undefined;
+    }
+
+    return song.duration > 1000 ? song.duration / 1000 : song.duration;
+}
 
 export const useMediaSession = () => {
     const { mediaSession: mediaSessionEnabled } = usePlaybackSettings();
     const player = usePlayer();
     const skip = useSkipButtons();
-    const playbackType = useSettingsStore((state) => state.playback.type);
     const isRadioActive = useIsRadioActive();
     const { isPlaying: isRadioPlaying, metadata: radioMetadata, stationName } = useRadioPlayer();
 
@@ -66,13 +88,17 @@ export const useMediaSession = () => {
     }, [stationName]);
 
     const isMediaSessionEnabled = useMemo(() => {
+        if (!mediaSession) {
+            return false;
+        }
+
         // Always enable media session on web
         if (!isElectron()) {
             return true;
         }
 
-        return Boolean(mediaSessionEnabled && playbackType === PlayerType.WEB);
-    }, [mediaSessionEnabled, playbackType]);
+        return Boolean(mediaSessionEnabled);
+    }, [mediaSessionEnabled]);
 
     useEffect(() => {
         isMediaSessionEnabledRef.current = isMediaSessionEnabled;
@@ -83,15 +109,12 @@ export const useMediaSession = () => {
     // silently no-oping because the [] effect already ran.
     useEffect(() => {
         if (!isMediaSessionEnabled) {
-            mediaSession.setActionHandler('nexttrack', null);
-            mediaSession.setActionHandler('pause', null);
-            mediaSession.setActionHandler('play', null);
-            mediaSession.setActionHandler('previoustrack', null);
-            mediaSession.setActionHandler('seekto', null);
-            mediaSession.setActionHandler('stop', null);
-            mediaSession.setActionHandler('seekbackward', null);
-            mediaSession.setActionHandler('seekforward', null);
+            clearMediaSessionHandlers();
 
+            return;
+        }
+
+        if (!mediaSession) {
             return;
         }
 
@@ -124,9 +147,9 @@ export const useMediaSession = () => {
                 return;
             }
 
-            if (e.seekTime) {
+            if (e.seekTime !== undefined) {
                 playerRef.current.mediaSeekToTimestamp(e.seekTime);
-            } else if (e.seekOffset) {
+            } else if (e.seekOffset !== undefined) {
                 const currentTimestamp = useTimestampStoreBase.getState().timestamp;
                 playerRef.current.mediaSeekToTimestamp(currentTimestamp + e.seekOffset);
             }
@@ -159,21 +182,41 @@ export const useMediaSession = () => {
         });
 
         return () => {
-            mediaSession.setActionHandler('nexttrack', null);
-            mediaSession.setActionHandler('pause', null);
-            mediaSession.setActionHandler('play', null);
-            mediaSession.setActionHandler('previoustrack', null);
-            mediaSession.setActionHandler('seekto', null);
-            mediaSession.setActionHandler('stop', null);
-            mediaSession.setActionHandler('seekbackward', null);
-            mediaSession.setActionHandler('seekforward', null);
+            clearMediaSessionHandlers();
         };
     }, [isMediaSessionEnabled]);
+
+    const updateMediaSessionPositionState = useCallback(
+        (
+            timestamp: number,
+            song: QueueSong | undefined = usePlayerStore.getState().getCurrentSong(),
+        ) => {
+            if (!isMediaSessionEnabledRef.current || !mediaSession?.setPositionState) {
+                return;
+            }
+
+            if (isRadioActiveRef.current && isRadioPlayingRef.current) {
+                return;
+            }
+
+            const duration = getDurationSeconds(song);
+            if (!duration) {
+                return;
+            }
+
+            mediaSession.setPositionState({
+                duration,
+                playbackRate: 1,
+                position: Math.min(Math.max(timestamp, 0), duration),
+            });
+        },
+        [],
+    );
 
     const updateMediaSessionMetadata = useCallback(
         (song: QueueSong | undefined) => {
             // Read from ref so this callback is never stale regardless of when it was created
-            if (!isMediaSessionEnabledRef.current) {
+            if (!isMediaSessionEnabledRef.current || !mediaSession) {
                 return;
             }
 
@@ -209,9 +252,11 @@ export const useMediaSession = () => {
                 artwork: imageUrl ? [{ src: imageUrl, type: 'image/png' }] : [],
                 title: song?.name ?? '',
             });
+
+            updateMediaSessionPositionState(useTimestampStoreBase.getState().timestamp, song);
         },
         // All values are read from refs — stable callback, no stale closure risk
-        [],
+        [updateMediaSessionPositionState],
     );
 
     // Debounced version to handle rapid skipping — only the last skip in a burst commits
@@ -257,21 +302,48 @@ export const useMediaSession = () => {
             }
 
             debouncedUpdateMetadata(song);
+            updateMediaSessionPositionState(useTimestampStoreBase.getState().timestamp, song);
         });
 
         const unsubscribeStatus = subscribePlayerStatus(({ status }) => {
-            if (!isMediaSessionEnabledRef.current) {
+            if (!isMediaSessionEnabledRef.current || !mediaSession) {
                 return;
             }
 
             mediaSession.playbackState = status === PlayerStatus.PLAYING ? 'playing' : 'paused';
         });
 
+        const unsubscribeTimestamp = subscribePlayerProgress(({ timestamp }) => {
+            updateMediaSessionPositionState(timestamp);
+        });
+
         return () => {
             unsubscribeCurrentSong();
             unsubscribeStatus();
+            unsubscribeTimestamp();
         };
-    }, [debouncedUpdateMetadata]);
+    }, [debouncedUpdateMetadata, updateMediaSessionPositionState]);
+
+    useEffect(() => {
+        if (!isMediaSessionEnabled) {
+            if (mediaSession) {
+                mediaSession.metadata = null;
+                mediaSession.playbackState = 'none';
+            }
+            return;
+        }
+
+        if (!mediaSession) {
+            return;
+        }
+
+        const { player } = usePlayerStore.getState();
+        const currentSong = usePlayerStore.getState().getCurrentSong();
+
+        updateMediaSessionMetadata(currentSong);
+        updateMediaSessionPositionState(useTimestampStoreBase.getState().timestamp, currentSong);
+        mediaSession.playbackState = player.status === PlayerStatus.PLAYING ? 'playing' : 'paused';
+    }, [isMediaSessionEnabled, updateMediaSessionMetadata, updateMediaSessionPositionState]);
 
     // onPlayerRepeated fires via eventEmitter (not Zustand), so usePlayerEvents is safe here —
     // the event emitter uses stable function references for on/off and does not re-subscribe

@@ -1,0 +1,89 @@
+name: Fork Sync and Release macOS
+
+on:
+    workflow_dispatch:
+        inputs:
+            upstream_repository:
+                description: Upstream repository to merge before building
+                required: true
+                default: jeffvli/feishin
+            upstream_branch:
+                description: Upstream branch to merge before building
+                required: true
+                default: main
+            release_tag:
+                description: Release tag to create or update
+                required: true
+                default: macos-media-session-latest
+
+permissions:
+    contents: write
+
+jobs:
+    sync-and-build:
+        runs-on: macos-26
+
+        strategy:
+            fail-fast: false
+            matrix:
+                arch: [arm64, x64]
+
+        steps:
+            - name: Checkout fork
+              uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
+
+            - name: Merge upstream
+              run: |
+                  git config user.name "github-actions[bot]"
+                  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+                  git remote add upstream "https://github.com/${{ inputs.upstream_repository }}.git"
+                  git fetch upstream "${{ inputs.upstream_branch }}"
+                  git merge --no-edit "upstream/${{ inputs.upstream_branch }}"
+
+            - name: Push synced branch
+              if: matrix.arch == 'arm64'
+              run: git push origin "HEAD:${{ github.ref_name }}"
+
+            - name: Install Node and PNPM
+              uses: pnpm/action-setup@v4
+              with:
+                  version: 10
+
+            - name: Install dependencies
+              run: pnpm install
+
+            - name: Typecheck
+              run: pnpm run typecheck
+
+            - name: Build app
+              env:
+                  NODE_OPTIONS: --max-old-space-size=4096
+              run: pnpm run build
+
+            - name: Package app
+              run: pnpm exec electron-builder --mac --dir --${{ matrix.arch }} --config electron-builder.local-mac.yml
+
+            - name: Zip app
+              run: |
+                  app_path="$(find dist -maxdepth 2 -type d -name 'Feishin.app' | head -n 1)"
+                  if [ -z "$app_path" ]; then
+                      echo "Feishin.app was not found in dist"
+                      exit 1
+                  fi
+                  ditto -c -k --sequesterRsrc --keepParent "$app_path" "dist/Feishin-${{ inputs.release_tag }}-macos-${{ matrix.arch }}.zip"
+
+            - name: Publish GitHub release asset
+              uses: softprops/action-gh-release@v2
+              with:
+                  tag_name: ${{ inputs.release_tag }}
+                  name: Feishin macOS Media Session Build
+                  body: |
+                      Local fork build with macOS Media Session and Bluetooth media-key fixes.
+
+                      This workflow first attempts to merge `${{ inputs.upstream_repository }}:${{ inputs.upstream_branch }}` into `${{ github.ref_name }}`.
+                  draft: false
+                  prerelease: false
+                  overwrite_files: true
+                  files: dist/Feishin-${{ inputs.release_tag }}-macos-${{ matrix.arch }}.zip

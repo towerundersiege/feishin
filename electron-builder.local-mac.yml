@@ -1,0 +1,25 @@
+appId: org.jeffvli.feishin
+productName: Feishin
+electronVersion: 39.4.0
+directories:
+    buildResources: assets
+files:
+    - 'out/**/*'
+    - 'package.json'
+extraResources:
+    - assets/**
+asarUnpack:
+    - resources/**
+mac:
+    icon: src/renderer/assets/icons/icon.icns
+    target:
+        - dir
+    type: distribution
+    hardenedRuntime: false
+    identity: '-'
+    gatekeeperAssess: false
+    notarize: false
+    extendInfo:
+        NSAudioCaptureUsageDescription: 'System audio access is required for mpv visualizer capture in Feishin'
+        NSLocalNetworkUsageDescription: 'Local network is necessary for accessing servers hosted on the same system as Feishin'
+npmRebuild: false
